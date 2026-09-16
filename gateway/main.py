@@ -14,6 +14,7 @@ from .cache import cache
 from .meter import meter, Ceiling
 from .router import router
 from .fallback import fallback
+from .batch_worker import batch_worker
 from .health import health_summary
 from pool.free_apis import free_pool
 from pool.cpu_llama import cpu
@@ -41,6 +42,7 @@ TIER_CEILINGS: dict[str, Ceiling] = {
 async def lifespan(app: FastAPI):
     await cache.warm()
     asyncio.create_task(free_pool.health_loop(15.0))
+    await batch_worker.start()
 
     async def sever(tenant: str, reason: str) -> None:
         log.error("sever.tenant", tenant=tenant, reason=reason)
@@ -50,12 +52,14 @@ async def lifespan(app: FastAPI):
         "acg.ready",
         models=len(matrix.all()),
         free_providers=len(free_pool.providers),
+        batch_worker=batch_worker.available(),
     )
     yield
+    await batch_worker.stop()
 
 
 app = FastAPI(
-    title="Asymmetric Compute Grid", version="1.0.0", lifespan=lifespan
+    title="Asymmetric Compute Grid", version="1.1.0", lifespan=lifespan
 )
 
 
@@ -70,6 +74,10 @@ class ChatRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 1024
     stream: bool = False
+    # "normal" = hot path (default), "low" = async batch queue (free-tier only)
+    priority: str = "normal"
+    # Optional LoRA adapter name to select on CPU models
+    lora_adapter: Optional[str] = None
 
 
 def tenant_from_key(api_key: str) -> tuple[str, str]:
@@ -78,6 +86,13 @@ def tenant_from_key(api_key: str) -> tuple[str, str]:
     if len(parts) < 4 or parts[0] != "acg":
         raise HTTPException(401, "invalid_api_key")
     return parts[1], parts[2]
+
+
+def _extract_messages(req: ChatRequest) -> tuple[str, str]:
+    """Returns (system_prompt, user_prompt) split from messages."""
+    system = "\n".join(m.content for m in req.messages if m.role == "system")
+    user = "\n".join(m.content for m in req.messages if m.role != "system")
+    return system, user
 
 
 @app.get("/health")
@@ -107,8 +122,36 @@ async def chat(req: ChatRequest, authorization: str = Header(...)):
     if await meter.is_throttled(tenant):
         raise HTTPException(429, "tenant_throttled")
 
-    prompt = "\n".join(m.content for m in req.messages)
+    system, prompt = _extract_messages(req)
 
+    # ── Item 5: async batch queue for low-priority free-tier requests ────────
+    if req.priority == "low" and tier == "free" and batch_worker.available():
+        try:
+            batch_model = "claude-haiku"
+            out = await batch_worker.submit(
+                model=batch_model,
+                system=system,
+                prompt=prompt,
+                params={"temperature": req.temperature, "max_tokens": req.max_tokens},
+            )
+            out["acg"] = {
+                "model_id": batch_model,
+                "provider": "anthropic:batch",
+                "tier": tier,
+                "tenant": tenant,
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+                "cached": False,
+                "degraded": False,
+                "intent": router.classify(prompt)[0],
+                "priority": "low",
+                "request_id": str(uuid.uuid4()),
+            }
+            return JSONResponse(out)
+        except Exception as e:
+            log.warning("batch_worker.fallthrough", err=str(e))
+            # Fall through to hot path on batch failure
+
+    # ── Hot path ─────────────────────────────────────────────────────────────
     if req.model == "auto":
         model = router.route(prompt, tenant_tier=tier)
     else:
@@ -116,10 +159,17 @@ async def chat(req: ChatRequest, authorization: str = Header(...)):
         if not model:
             raise HTTPException(404, f"model_not_found:{req.model}")
 
-    params = {"temperature": req.temperature, "max_tokens": req.max_tokens}
+    params = {
+        "temperature": req.temperature,
+        "max_tokens": req.max_tokens,
+        "_tier": tier,
+        **({"lora_adapter": req.lora_adapter} if req.lora_adapter else {}),
+    }
 
     try:
-        out = await fallback.generate(model, prompt, params, tenant)
+        out = await fallback.generate(
+            model, prompt, params, tenant, system=system
+        )
     except RuntimeError as e:
         raise HTTPException(503, str(e))
 
@@ -140,6 +190,8 @@ async def chat(req: ChatRequest, authorization: str = Header(...)):
         "cached": out.get("cached", False),
         "degraded": out.get("degraded", False),
         "intent": router.classify(prompt)[0],
+        "difficulty": router.difficulty(prompt),
+        "priority": req.priority,
         "request_id": str(uuid.uuid4()),
     }
     return JSONResponse(out)

@@ -9,6 +9,9 @@ import structlog
 
 log = structlog.get_logger()
 
+# Providers that have automatic server-side prefix caching (no extra headers needed)
+_AUTO_CACHE_PROVIDERS = frozenset({"google", "openrouter"})
+
 
 @dataclass
 class Provider:
@@ -21,6 +24,8 @@ class Provider:
     healthy: bool = True
     consecutive_fails: int = 0
     last_check: float = 0.0
+    # "openai" = /chat/completions, "anthropic" = /messages with cache_control
+    cache_strategy: str = "openai"
     _rpm_window: list[float] = field(default_factory=list)
 
     def can_call(self) -> bool:
@@ -31,18 +36,27 @@ class Provider:
     def record(self) -> None:
         self._rpm_window.append(time.time())
 
+    @property
+    def auto_caches(self) -> bool:
+        return self.name in _AUTO_CACHE_PROVIDERS
+
 
 @dataclass
 class FreePool:
     providers: list[Provider]
 
     async def _health(self, p: Provider, client: httpx.AsyncClient) -> None:
+        path = "/models" if p.cache_strategy == "openai" else "/models"
         try:
-            r = await client.get(
-                f"{p.base_url}/models",
-                headers={"Authorization": f"Bearer {p.api_key}"},
-                timeout=5.0,
+            headers = (
+                {"Authorization": f"Bearer {p.api_key}"}
+                if p.cache_strategy == "openai"
+                else {
+                    "x-api-key": p.api_key,
+                    "anthropic-version": "2023-06-01",
+                }
             )
+            r = await client.get(f"{p.base_url}{path}", headers=headers, timeout=5.0)
             p.healthy = r.status_code < 500
             if p.healthy:
                 p.consecutive_fails = 0
@@ -72,6 +86,13 @@ class FreePool:
         candidates.sort(key=lambda p: (-p.weight, p.consecutive_fails))
         return candidates[0]
 
+    def pick_for_batch(self, model_id: str) -> Optional[Provider]:
+        """Pick the Anthropic provider for batch API use."""
+        for p in self.providers:
+            if p.cache_strategy == "anthropic" and model_id in p.model_map and p.api_key:
+                return p
+        return None
+
 
 def build_pool() -> FreePool:
     def mk(
@@ -81,9 +102,13 @@ def build_pool() -> FreePool:
         mmap: dict,
         rpm: int,
         weight: float = 1.0,
+        cache_strategy: str = "openai",
     ) -> Optional[Provider]:
         key = os.getenv(env, "")
-        return Provider(name, url, key, mmap, rpm, weight) if key else None
+        if not key:
+            return None
+        return Provider(name, url, key, mmap, rpm, weight,
+                        cache_strategy=cache_strategy)
 
     specs = [
         (
@@ -94,8 +119,7 @@ def build_pool() -> FreePool:
                 "llama-3.3-70b": "llama-3.3-70b-versatile",
                 "gpt-oss-120b": "openai/gpt-oss-120b",
             },
-            30,
-            1.5,
+            30, 1.5, "openai",
         ),
         (
             "cerebras",
@@ -105,16 +129,14 @@ def build_pool() -> FreePool:
                 "llama-3.3-70b": "llama3.3-70b",
                 "gpt-oss-120b": "gpt-oss-120b",
             },
-            30,
-            1.5,
+            30, 1.5, "openai",
         ),
         (
             "sambanova",
             "https://api.sambanova.ai/v1",
             "SAMBANOVA_API_KEY",
             {"llama-3.3-70b": "Meta-Llama-3.3-70B-Instruct"},
-            30,
-            1.2,
+            30, 1.2, "openai",
         ),
         (
             "together",
@@ -124,8 +146,7 @@ def build_pool() -> FreePool:
                 "llama-3.3-70b": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
                 "qwen3.6-27b": "Qwen/Qwen3.6-27B",
             },
-            60,
-            1.0,
+            60, 1.0, "openai",
         ),
         (
             "openrouter",
@@ -135,48 +156,53 @@ def build_pool() -> FreePool:
                 "llama-3.3-70b": "meta-llama/llama-3.3-70b-instruct:free",
                 "gpt-oss-120b": "openai/gpt-oss-120b:free",
             },
-            20,
-            1.0,
+            20, 1.0, "openai",
         ),
         (
             "google",
             "https://generativelanguage.googleapis.com/v1beta/openai",
             "GOOGLE_API_KEY",
             {"gemini-2.5-flash": "gemini-2.5-flash"},
-            60,
-            1.3,
+            60, 1.3, "openai",
         ),
         (
             "mistral",
             "https://api.mistral.ai/v1",
             "MISTRAL_API_KEY",
             {"mistral-small": "mistral-small-latest"},
-            60,
-            1.0,
+            60, 1.0, "openai",
         ),
         (
             "cohere",
             "https://api.cohere.ai/compatibility/v1",
             "COHERE_API_KEY",
             {"command-r": "command-r-plus-08-2024"},
-            20,
-            0.9,
+            20, 0.9, "openai",
         ),
         (
             "hf",
             "https://api-inference.huggingface.co/v1",
             "HF_TOKEN",
             {"llama-3.3-70b": "meta-llama/Llama-3.3-70B-Instruct"},
-            30,
-            0.8,
+            30, 0.8, "openai",
         ),
         (
             "replicate",
             "https://api.replicate.com/v1",
             "REPLICATE_API_TOKEN",
             {"llama-3.3-70b": "meta/meta-llama-3.3-70b-instruct"},
-            10,
-            0.7,
+            10, 0.7, "openai",
+        ),
+        # Anthropic native — uses /v1/messages with cache_control, not /chat/completions
+        (
+            "anthropic",
+            "https://api.anthropic.com/v1",
+            "ANTHROPIC_API_KEY",
+            {
+                "claude-haiku": "claude-haiku-4-5-20251001",
+                "claude-sonnet": "claude-sonnet-4-6",
+            },
+            60, 1.4, "anthropic",
         ),
     ]
     providers = [p for p in (mk(*s) for s in specs) if p]

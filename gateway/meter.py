@@ -78,6 +78,20 @@ class Meter:
             except Exception as e:
                 log.error("meter.sever_hook", err=str(e))
 
+    async def peek_spend(self, tenant: str) -> dict:
+        """Read current window totals without incrementing — used for pre-dispatch gate."""
+        _, hour = self._now()
+        tok, usd, w = await asyncio.gather(
+            self.r.get(f"m:{tenant}:tok:{hour}"),
+            self.r.get(f"m:{tenant}:usd:{hour}"),
+            self.r.get(f"m:{tenant}:w:{hour}"),
+        )
+        return {
+            "tokens": int(tok or 0),
+            "dollars": float(usd or 0),
+            "watts": float(w or 0),
+        }
+
     async def is_throttled(self, tenant: str) -> bool:
         return (await self.r.get(f"state:{tenant}")) == "throttled"
 
