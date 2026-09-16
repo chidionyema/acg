@@ -19,6 +19,7 @@ GGUF_MAP: dict[str, str] = {
     "nanbeige-3b": "nanbeige4.1-3b-Q4_K_M.gguf",
     "zaya1-8b": "zaya1-8b-Q4_K_M.gguf",
     "falcon-h1r-7b": "falcon-h1r-7b-Q4_K_M.gguf",
+    "ornith-1.5-9b": "ornith-1.5-9b-Q4_K_M.gguf",
 }
 
 # Minimum token count for Anthropic cache_control to take effect
