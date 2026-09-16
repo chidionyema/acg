@@ -1,0 +1,118 @@
+version: 1
+defaults:
+  quant: Q4_K_M
+  backend: llama.cpp
+models:
+  - id: smollm3-3b
+    params: 3.0e9
+    active: 3.0e9
+    license: apache-2.0
+    ram_q4_gb: 2.0
+    vram_q4_gb: 2.2
+    cpu_tps_ampere: 18
+    gpu_tps_3090: 140
+    intents: [code, chat, general]
+    quality: 0.72
+    beats: [sonnet-4]
+    benchmarks: {agent_code: 93.3, sonnet4_agent_code: 85.0}
+    providers: [local_cpu, local_gpu, free_api]
+    hf: HuggingFaceTB/SmolLM3-3B
+  - id: nanbeige-3b
+    params: 3.0e9
+    active: 3.0e9
+    license: apache-2.0
+    ram_q4_gb: 2.0
+    vram_q4_gb: 2.2
+    cpu_tps_ampere: 17
+    gpu_tps_3090: 130
+    intents: [general, chat, code]
+    quality: 0.74
+    beats: [30b-class]
+    benchmarks: {}
+    providers: [local_cpu, local_gpu]
+    hf: Nanbeige/Nanbeige4.1-3B
+  - id: zaya1-8b
+    params: 8.0e9
+    active: 7.6e8
+    license: apache-2.0
+    ram_q4_gb: 5.0
+    vram_q4_gb: 5.5
+    cpu_tps_ampere: 22
+    gpu_tps_3090: 180
+    intents: [math, reasoning]
+    quality: 0.81
+    beats: [sonnet-4.5]
+    benchmarks: {hmmt_2025: 89.6, sonnet45_hmmt: 88.3}
+    providers: [local_cpu, local_gpu, free_api]
+    hf: Zyphra/ZAYA1-8B
+  - id: falcon-h1r-7b
+    params: 7.0e9
+    active: 7.0e9
+    license: apache-2.0
+    ram_q4_gb: 4.0
+    vram_q4_gb: 4.5
+    cpu_tps_ampere: 10
+    gpu_tps_3090: 110
+    intents: [math]
+    quality: 0.78
+    beats: [15b, 32b]
+    benchmarks: {aime_2025: 83.1}
+    providers: [local_cpu, local_gpu]
+    hf: tiiuae/Falcon-H1R-7B
+  - id: ornith-1.5-9b
+    params: 9.0e9
+    active: 9.0e9
+    license: apache-2.0
+    ram_q4_gb: 1.5
+    vram_q4_gb: 5.5
+    cpu_tps_ampere: 7
+    gpu_tps_3090: 95
+    intents: [general, edge]
+    quality: 0.76
+    beats: [gemma-4-31b]
+    benchmarks: {}
+    providers: [local_cpu, local_gpu, edge]
+    hf: Ornith/Ornith-1.5-9B
+  - id: qwen3-coder-next
+    params: 80.0e9
+    active: 3.0e9
+    license: apache-2.0
+    ram_q4_gb: 32.0
+    vram_q4_gb: 32.0
+    cpu_tps_ampere: 3
+    gpu_tps_3090: 55
+    intents: [code]
+    quality: 0.88
+    beats: [dense-32b]
+    benchmarks: {}
+    providers: [local_gpu, spot]
+    hf: Qwen/Qwen3-Coder-Next
+  - id: qwen3.6-27b
+    params: 27.0e9
+    active: 27.0e9
+    license: apache-2.0
+    ram_q4_gb: 18.0
+    vram_q4_gb: 18.0
+    cpu_tps_ampere: 2
+    gpu_tps_3090: 60
+    intents: [general, code, reasoning]
+    quality: 0.90
+    beats: [sonnet-4.6]
+    benchmarks: {terminal_bench: 59.3, sonnet46_terminal_bench: 59.1}
+    providers: [local_gpu, spot]
+    hf: Qwen/Qwen3.6-27B
+  - id: gpt-oss-120b
+    params: 116.83e9
+    active: 5.13e9
+    license: apache-2.0
+    ram_q4_gb: 80.0
+    vram_q4_gb: 80.0
+    cpu_tps_ampere: 0.4
+    gpu_tps_3090: 0
+    gpu_tps_a100: 45
+    intents: [general, reasoning, code]
+    quality: 0.93
+    beats: [o4-mini]
+    benchmarks: {}
+    providers: [free_api, spot_80]
+    hf: openai/gpt-oss-120b

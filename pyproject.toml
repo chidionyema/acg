@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acg"
+version = "1.0.0"
+description = "Asymmetric Compute Grid — OpenAI-compatible inference gateway"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+    "redis>=5.2",
+    "sentence-transformers>=3.3",
+    "numpy>=2.2",
+    "pyyaml>=6.0",
+    "structlog>=24.4",
+    "prometheus-client>=0.21",
+    "pydantic>=2.10",
+    "openai>=1.60",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "httpx"]
