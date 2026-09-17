@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# estate-brief — model-agnostic estate context for any agent not routing through ACG.
+#
+# Outputs: ~/AGENTS.md (estate rules) + growmos estate-graph context brief.
+# Any agent can eval/source this at startup to receive the same context ACG injects.
+#
+# Usage:
+#   bin/estate-brief                     # print to stdout
+#   CONTEXT=$(bin/estate-brief)          # capture in shell variable
+#   export AGENT_SYSTEM=$(bin/estate-brief)  # set as env var for your agent runtime
+#
+# Model-agnostic: works with any provider (OpenAI, Anthropic, Groq, Gemini, Mistral, etc.)
+# Single source of truth: same data ACG injects via context_service.py
+
+set -euo pipefail
+
+AGENTS_MD="${HOME}/AGENTS.md"
+ESTATE_GRAPH="${HOME}/Documents/code/estate-graph"
+
+echo "=== ESTATE RULES ==="
+if [ -f "$AGENTS_MD" ]; then
+  cat "$AGENTS_MD"
+else
+  echo "(~/AGENTS.md not found)"
+fi
+
+echo ""
+echo "=== LIVE ESTATE GRAPH ==="
+if command -v growmos &>/dev/null && [ -d "$ESTATE_GRAPH/.growmos" ]; then
+  growmos --root "$ESTATE_GRAPH" context --brief --budget 500 2>/dev/null || echo "(growmos context unavailable)"
+else
+  echo "(growmos not installed or estate-graph not initialised)"
+fi

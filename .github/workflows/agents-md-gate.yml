@@ -1,0 +1,15 @@
+name: agents-md-gate
+on:
+  pull_request:
+    paths: ["AGENTS.md"]
+  push:
+    branches: [main]
+    paths: ["AGENTS.md"]
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: AGENTS.md must be ≤300 lines and use pointers not prose
+        run: bash bin/check-agents-md

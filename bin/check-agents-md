@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Fail if AGENTS.md exceeds 300 lines or the growmos block has been manually edited.
+# Run from repo root. Add to CI or pre-push hook.
+set -euo pipefail
+
+MAX_LINES=300
+FILE="AGENTS.md"
+
+if [ ! -f "$FILE" ]; then
+  echo "FAIL: $FILE missing" >&2
+  exit 1
+fi
+
+lines=$(wc -l < "$FILE")
+if [ "$lines" -gt "$MAX_LINES" ]; then
+  echo "FAIL: $FILE is $lines lines (max $MAX_LINES). Move content to docs/ and use pointers." >&2
+  exit 1
+fi
+
+echo "OK: $FILE is $lines lines (≤$MAX_LINES)"

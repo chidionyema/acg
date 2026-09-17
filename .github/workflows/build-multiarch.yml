@@ -1,0 +1,157 @@
+# button: Build ACG container image
+# founder: Builds the ACG inference gateway for both Intel and ARM and publishes to GHCR.
+name: build-multiarch
+# R24: linux/amd64 and linux/arm64, one manifest list, push on main only.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "build images changed since this commit (empty: every image)"
+        required: false
+        default: ""
+permissions:
+  contents: read
+  packages: write
+env:
+  REGISTRY: ghcr.io
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      dockerfiles: ${{ steps.find.outputs.list }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: find
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) base="origin/${{ github.base_ref }}" ;;
+            workflow_dispatch) base="${{ inputs.since }}" ;;
+            *) base="${{ github.event.before }}" ;;
+          esac
+          list=$(bin/dockerfiles --json --changed-since "$base")
+          echo "list=$list" >> "$GITHUB_OUTPUT"; echo "dockerfiles: $list"
+  build:
+    needs: discover
+    if: needs.discover.outputs.dockerfiles != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: ${{ fromJson(needs.discover.outputs.dockerfiles) }}
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: name
+        run: |
+          n='${{ matrix.dockerfile.name }}'
+          arch=${{ matrix.platform }}; arch=${arch#linux/}
+          {
+            echo "context=${{ matrix.dockerfile.context }}"
+            echo "image=${{ env.REGISTRY }}/${{ github.repository_owner }}/$n"
+            echo "arch=$arch"
+            echo "slug=$(echo "$n" | tr -c 'a-z0-9\n' '-')"
+          } >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ${{ steps.name.outputs.context }}
+          file: ${{ matrix.dockerfile.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: |
+            ${{ github.event_name != 'pull_request' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.name.outputs.image) || 'type=cacheonly' }}
+            type=docker,dest=/tmp/scan.tar
+          cache-from: type=gha,scope=${{ steps.name.outputs.slug }}-${{ steps.name.outputs.arch }}
+          cache-to: type=gha,mode=max,scope=${{ steps.name.outputs.slug }}-${{ steps.name.outputs.arch }}
+      - name: no CRITICAL vulnerability ships
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: /tmp/scan.tar
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+      - if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests/${{ steps.name.outputs.slug }}
+          d="${{ steps.build.outputs.digest }}"; touch "/tmp/digests/${{ steps.name.outputs.slug }}/${d#sha256:}"
+          echo "${{ steps.name.outputs.image }}" > /tmp/digests/${{ steps.name.outputs.slug }}/IMAGE
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ steps.name.outputs.slug }}-${{ steps.name.outputs.arch }}
+          path: /tmp/digests/${{ steps.name.outputs.slug }}/*
+          if-no-files-found: error
+  merge:
+    needs: [discover, build]
+    if: |
+      always() && github.event_name != 'pull_request' && needs.discover.outputs.dockerfiles != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      matrix:
+        dockerfile: ${{ fromJson(needs.discover.outputs.dockerfiles) }}
+    steps:
+      - id: name
+        run: echo "slug=$(echo '${{ matrix.dockerfile.name }}' | tr -c 'a-z0-9\n' '-')" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ steps.name.outputs.slug }}-*
+          merge-multiple: true
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - id: tag
+        run: |
+          cd /tmp/digests
+          image=$(cat IMAGE)
+          digests=""
+          for f in *; do
+            case "$f" in *[!0-9a-f]*) continue ;; esac
+            [ "${#f}" -eq 64 ] || continue
+            digests="$digests $image@sha256:$f"
+          done
+          n=$(echo "$digests" | wc -w)
+          [ "$n" -eq 2 ] || { echo "R24: expected 2 per-arch digests, found $n"; exit 1; }
+          # shellcheck disable=SC2086
+          docker buildx imagetools create -t "$image:${{ github.sha }}" -t "$image:main-${{ github.run_number }}-${{ github.sha }}" $digests
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: sign the manifest list
+        run: |
+          image='${{ steps.tag.outputs.image }}'
+          digest=$(docker buildx imagetools inspect "$image:${{ github.sha }}" --format '{{.Manifest.Digest}}')
+          cosign sign --yes --new-bundle-format=false --use-signing-config=false "$image@$digest"
+          cosign verify "$image@$digest" \
+            --new-bundle-format=false \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            > /dev/null
+          sigtag="sha256-${digest#sha256:}.sig"
+          docker buildx imagetools inspect "$image:$sigtag" > /dev/null
+          echo "signed and verified $image@$digest"

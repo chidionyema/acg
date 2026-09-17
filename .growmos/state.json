@@ -1,0 +1,13 @@
+{
+  "counters": {
+    "extractions": 0,
+    "profiles": 0,
+    "queries": 0,
+    "resolutions": 0
+  },
+  "created": "2026-09-16T19:28:58Z",
+  "last_eval": null,
+  "last_sample": null,
+  "pending_resummarize": [],
+  "runs": []
+}
