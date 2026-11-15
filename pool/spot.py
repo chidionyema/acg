@@ -6,6 +6,8 @@ from typing import Optional
 import httpx
 import structlog
 
+from gateway.secrets import secret
+
 log = structlog.get_logger()
 
 
@@ -25,8 +27,9 @@ class SpotDriver:
     """Bids across Vast/RunPod/TensorDock, keeps cheapest, checkpoints."""
 
     def __init__(self) -> None:
-        self.vast_key = os.getenv("VAST_API_KEY", "")
-        self.runpod_key = os.getenv("RUNPOD_API_KEY", "")
+        # File-mounted first (<NAME>_FILE), environment only as a local-run fallback.
+        self.vast_key = secret("VAST_API_KEY")
+        self.runpod_key = secret("RUNPOD_API_KEY")
         self.max_hourly = float(os.getenv("MAX_HOURLY_USD", "0.30"))
         self.instances: dict[str, Instance] = {}
 

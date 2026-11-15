@@ -17,9 +17,12 @@ from typing import Any
 
 import structlog
 
+from .secrets import secret
+
 log = structlog.get_logger()
 
-_API_KEY = os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY")
+# File-mounted first (<NAME>_FILE), environment only as a local-run fallback.
+_API_KEY = secret("LANGSMITH_API_KEY") or secret("LANGCHAIN_API_KEY")
 _PROJECT = os.getenv("LANGCHAIN_PROJECT", "acg")
 _ENABLED = bool(_API_KEY)
 
