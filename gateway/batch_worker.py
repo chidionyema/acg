@@ -14,6 +14,8 @@ from typing import Optional
 import httpx
 import structlog
 
+from .secrets import secret
+
 log = structlog.get_logger()
 
 _ANTHROPIC_BASE = "https://api.anthropic.com/v1"
@@ -37,7 +39,8 @@ class BatchWorker:
     """Collects low-priority requests, submits to Anthropic Batches API in windows."""
 
     def __init__(self) -> None:
-        self._api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        # File-mounted first (<NAME>_FILE), environment only as a local-run fallback.
+        self._api_key = secret("ANTHROPIC_API_KEY")
         self._queue: asyncio.Queue[_PendingRequest] = asyncio.Queue()
         self._running = False
 

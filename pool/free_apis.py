@@ -7,6 +7,8 @@ from typing import Optional
 import httpx
 import structlog
 
+from gateway.secrets import secret
+
 log = structlog.get_logger()
 
 # Providers that have automatic server-side prefix caching (no extra headers needed)
@@ -104,7 +106,8 @@ def build_pool() -> FreePool:
         weight: float = 1.0,
         cache_strategy: str = "openai",
     ) -> Optional[Provider]:
-        key = os.getenv(env, "")
+        # File-mounted first (<NAME>_FILE), environment only as a local-run fallback.
+        key = secret(env)
         if not key:
             return None
         return Provider(name, url, key, mmap, rpm, weight,
